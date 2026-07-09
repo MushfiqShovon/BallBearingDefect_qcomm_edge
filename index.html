@@ -3,326 +3,455 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Ball-Bearing Defect Segmentation — from GB10 to the Qualcomm NPU</title>
-<meta name="description" content="YOLOv8 + SAM defect segmentation: trained on an NVIDIA GB10, deployed to the Qualcomm Dragonwing IQ-9075 NPU, with a quantified study of quantization and conversion losses.">
+<title>Ball-Bearing Defect Segmentation on the Qualcomm IQ-9075 NPU</title>
+<meta name="description" content="A YOLOv8 + Segment Anything defect-segmentation pipeline, trained on an NVIDIA GB10 and deployed to the Qualcomm Dragonwing IQ-9075 NPU, with measured quantization and conversion losses.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #fafafa; --surface: #ffffff; --ink: #1a1f26; --ink-2: #4a5462;
-    --ink-3: #8a93a0; --line: #e3e6ea; --accent: #0d5c8c; --accent-ink: #0d5c8c;
-    --callout-bg: #eef4f9; --warn-bg: #fdf3f2; --warn-edge: #c0392b;
-    --good: #1e7e4e; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --navy-900: #0a1f38; --navy-800: #0e2a4a; --navy-700: #14385f;
+    --blue: #2f7dd1; --blue-deep: #1b5ea8; --blue-ink: #1b5ea8;
+    --bg: #f4f6f9; --surface: #ffffff;
+    --ink: #16202e; --ink-2: #46556a; --ink-3: #7d8a9c;
+    --line: #e2e7ee; --shadow: 0 1px 2px rgba(14, 42, 74, .06), 0 4px 14px rgba(14, 42, 74, .07);
+    --shadow-lg: 0 2px 6px rgba(14, 42, 74, .08), 0 12px 28px rgba(14, 42, 74, .12);
+    --callout-bg: #edf3fa; --warn-bg: #fdf2f0; --warn-edge: #bf3d2d;
+    --good: #17754a;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #14171c; --surface: #1c2027; --ink: #e8eaee; --ink-2: #aeb6c2;
-      --ink-3: #7a8390; --line: #2c323b; --accent: #5aa9d6; --accent-ink: #7fc0e8;
-      --callout-bg: #1d2733; --warn-bg: #2b1f1e; --warn-edge: #e07b6d;
-      --good: #5dbd8a;
+      --navy-900: #060f1c; --navy-800: #0a1a2e; --navy-700: #10263e;
+      --blue: #5c9fdd; --blue-deep: #79b4e8; --blue-ink: #82bbec;
+      --bg: #101720; --surface: #18212d;
+      --ink: #e7ebf1; --ink-2: #a9b4c3; --ink-3: #75818f;
+      --line: #263344; --shadow: 0 1px 2px rgba(0,0,0,.35), 0 4px 14px rgba(0,0,0,.3);
+      --shadow-lg: 0 2px 6px rgba(0,0,0,.4), 0 12px 28px rgba(0,0,0,.45);
+      --callout-bg: #1b2a3d; --warn-bg: #2c1d1a; --warn-edge: #e2836f;
+      --good: #5cc08b;
     }
   }
   * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; scroll-padding-top: 70px; }
   body {
     margin: 0; background: var(--bg); color: var(--ink);
-    font: 16px/1.65 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 16px; line-height: 1.7;
   }
-  .wrap { max-width: 980px; margin: 0 auto; padding: 0 20px; }
-  a { color: var(--accent-ink); }
-  h1, h2, h3 { line-height: 1.25; }
-  h2 { margin: 2.6em 0 .6em; font-size: 1.55rem; border-bottom: 2px solid var(--line); padding-bottom: .35em; }
-  h3 { margin: 1.8em 0 .5em; font-size: 1.15rem; }
-  code { font-family: var(--mono); font-size: .875em; background: var(--callout-bg); padding: .12em .35em; border-radius: 4px; }
-  pre { background: var(--callout-bg); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; overflow-x: auto; font-size: .82rem; line-height: 1.55; }
-  pre code { background: none; padding: 0; }
+  .wrap { max-width: 1020px; margin: 0 auto; padding: 0 24px; }
+  a { color: var(--blue-ink); }
+  h2, h3 { line-height: 1.25; letter-spacing: -.015em; }
+  h3 { margin: 1.8em 0 .5em; font-size: 1.12rem; font-weight: 700; }
+  code { font-family: var(--mono); font-size: .86em; background: var(--callout-bg); padding: .12em .38em; border-radius: 4px; }
 
-  header.hero { background: var(--surface); border-bottom: 1px solid var(--line); padding: 52px 0 40px; }
-  .hero h1 { margin: 0 0 .3em; font-size: 2.1rem; }
-  .hero p.sub { margin: 0; color: var(--ink-2); font-size: 1.08rem; max-width: 46em; }
-  .hero .meta { margin-top: 14px; color: var(--ink-3); font-size: .88rem; }
+  /* ---- top navigation ---- */
+  .nav {
+    position: sticky; top: 0; z-index: 20;
+    background: var(--surface); border-bottom: 1px solid var(--line);
+    box-shadow: 0 1px 8px rgba(14, 42, 74, .06);
+  }
+  .nav .wrap { display: flex; align-items: center; gap: 22px; height: 56px; }
+  .brand { font-weight: 800; font-size: .95rem; color: var(--ink); text-decoration: none; letter-spacing: -.01em; white-space: nowrap; }
+  .brand .dot { color: var(--blue); }
+  .navlinks { display: flex; gap: 18px; overflow-x: auto; font-size: .86rem; font-weight: 500; }
+  .navlinks a { color: var(--ink-2); text-decoration: none; white-space: nowrap; padding: 4px 0; border-bottom: 2px solid transparent; }
+  .navlinks a:hover { color: var(--blue-ink); border-bottom-color: var(--blue); }
 
-  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; margin: 30px 0 6px; }
-  .kpi { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; }
-  .kpi .v { font-size: 1.7rem; font-weight: 700; letter-spacing: -.01em; }
-  .kpi .l { color: var(--ink-2); font-size: .84rem; margin-top: 2px; }
-  .kpi .d { color: var(--ink-3); font-size: .78rem; margin-top: 6px; }
+  /* ---- hero ---- */
+  .hero {
+    background: linear-gradient(150deg, var(--navy-900) 0%, var(--navy-800) 55%, var(--navy-700) 100%);
+    color: #eef3f9; padding: 72px 0 96px; position: relative; overflow: hidden;
+  }
+  .hero::after {  /* subtle diagonal texture */
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    background: repeating-linear-gradient(115deg, rgba(255,255,255,.025) 0 2px, transparent 2px 90px);
+  }
+  .hero .eyebrow {
+    display: inline-block; font-size: .74rem; font-weight: 700; letter-spacing: .14em;
+    text-transform: uppercase; color: #9cc4ea; border: 1px solid rgba(156,196,234,.35);
+    padding: .3em 1em; border-radius: 99px; margin-bottom: 22px;
+  }
+  .hero h1 { margin: 0 0 .45em; font-size: clamp(1.9rem, 4.2vw, 2.7rem); font-weight: 800; letter-spacing: -.02em; line-height: 1.15; max-width: 21em; }
+  .hero p.sub { margin: 0; font-size: 1.06rem; color: #c2d2e4; max-width: 47em; }
+  .hero .meta { margin-top: 18px; color: #8fa5bd; font-size: .87rem; }
+  .btnrow { margin-top: 28px; display: flex; flex-wrap: wrap; gap: 12px; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 9px; text-decoration: none;
+    font-size: .9rem; font-weight: 600; padding: 11px 20px; border-radius: 8px;
+    transition: transform .12s ease, box-shadow .12s ease;
+  }
+  .btn:hover { transform: translateY(-1px); box-shadow: var(--shadow-lg); }
+  .btn.primary { background: var(--blue); color: #fff; }
+  .btn.ghost { background: rgba(255,255,255,.08); color: #dbe7f3; border: 1px solid rgba(255,255,255,.25); }
+  .btn svg { width: 17px; height: 17px; fill: currentColor; flex: none; }
 
-  table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: .92rem; }
-  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--line); }
-  th { color: var(--ink-2); font-weight: 600; font-size: .84rem; text-transform: uppercase; letter-spacing: .03em; }
+  /* ---- KPI band overlapping hero ---- */
+  .kpiband { margin-top: -52px; position: relative; z-index: 2; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; }
+  .kpi { background: var(--surface); border-radius: 12px; padding: 20px 22px; box-shadow: var(--shadow); border-top: 3px solid var(--blue); }
+  .kpi .v { font-size: 1.85rem; font-weight: 800; letter-spacing: -.02em; }
+  .kpi .l { color: var(--ink-2); font-size: .85rem; font-weight: 600; margin-top: 2px; }
+  .kpi .d { color: var(--ink-3); font-size: .78rem; margin-top: 6px; line-height: 1.45; }
+
+  /* ---- sections ---- */
+  main { padding-top: 26px; }
+  section { margin-top: 64px; }
+  .sec-eyebrow { font-size: .72rem; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; color: var(--blue-ink); }
+  section > h2 { margin: .2em 0 .55em; font-size: 1.65rem; font-weight: 800; }
+  section > h2 + p { margin-top: 0; }
+  p { color: var(--ink); }
+
+  .panel { background: var(--surface); border-radius: 12px; box-shadow: var(--shadow); padding: 6px 22px 10px; margin: 1.2em 0; }
+
+  table { border-collapse: collapse; width: 100%; margin: 1.1em 0; font-size: .92rem; background: var(--surface); border-radius: 10px; overflow: hidden; box-shadow: var(--shadow); }
+  th, td { text-align: left; padding: 10px 14px; }
+  thead th { background: var(--navy-800); color: #dce6f2; font-weight: 600; font-size: .8rem; text-transform: uppercase; letter-spacing: .05em; }
+  tbody tr { border-top: 1px solid var(--line); }
   td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
-  tr.hl td { font-weight: 700; }
-  .tablewrap { overflow-x: auto; }
+  tr.hl td { font-weight: 700; background: var(--callout-bg); }
+  .tablewrap { overflow-x: auto; border-radius: 10px; }
 
-  figure { margin: 1.4em 0; }
-  figure img { max-width: 100%; height: auto; border: 1px solid var(--line); border-radius: 8px; display: block; }
-  figcaption { color: var(--ink-3); font-size: .84rem; margin-top: 8px; }
-  .imgrow { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+  figure { margin: 1.5em 0; }
+  figure img { max-width: 100%; height: auto; border-radius: 10px; display: block; box-shadow: var(--shadow); }
+  figcaption { color: var(--ink-3); font-size: .84rem; margin-top: 10px; line-height: 1.5; }
+  .imgrow { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; }
   .imgrow figure { margin: 0; }
   .scrollfig { overflow-x: auto; }
   .scrollfig img { max-width: none; width: 1400px; }
   @media (min-width: 1450px) { .scrollfig img { width: 100%; max-width: 100%; } }
 
-  .callout { background: var(--callout-bg); border-left: 4px solid var(--accent); border-radius: 0 8px 8px 0; padding: 14px 18px; margin: 1.3em 0; }
+  .callout { background: var(--callout-bg); border-left: 4px solid var(--blue); border-radius: 0 10px 10px 0; padding: 16px 20px; margin: 1.4em 0; box-shadow: var(--shadow); }
   .callout.warn { background: var(--warn-bg); border-left-color: var(--warn-edge); }
-  .flow { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 1.2em 0; font-size: .88rem; }
-  .flow .step { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 8px 13px; }
-  .flow .npu { border-color: var(--accent); }
-  .flow .arr { color: var(--ink-3); }
-  .pill { display: inline-block; font-size: .75rem; padding: .15em .6em; border-radius: 99px; border: 1px solid var(--line); color: var(--ink-2); margin-left: 6px; vertical-align: middle; }
 
-  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin: 1.2em 0; }
-  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; }
-  .card h4 { margin: 0 0 .4em; font-size: .98rem; }
+  .flow { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 1.3em 0; font-size: .88rem; }
+  .flow .step { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 8px 14px; box-shadow: var(--shadow); }
+  .flow .npu { border-color: var(--blue); border-width: 2px; }
+  .flow .arr { color: var(--ink-3); font-weight: 600; }
+
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(285px, 1fr)); gap: 16px; margin: 1.3em 0; }
+  .card { background: var(--surface); border-radius: 12px; padding: 20px 22px; box-shadow: var(--shadow); border-top: 3px solid var(--line); transition: transform .12s ease, box-shadow .12s ease; }
+  .card:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
+  .card.accent { border-top-color: var(--blue); }
+  .card h4 { margin: 0 0 .45em; font-size: .98rem; font-weight: 700; }
   .card p { margin: 0; color: var(--ink-2); font-size: .88rem; }
 
-  nav.toc { position: sticky; top: 0; background: var(--bg); border-bottom: 1px solid var(--line); z-index: 5; padding: 9px 0; font-size: .85rem; }
-  nav.toc .wrap { display: flex; flex-wrap: wrap; gap: 4px 16px; }
-  nav.toc a { color: var(--ink-2); text-decoration: none; }
-  nav.toc a:hover { color: var(--accent-ink); }
+  .good { color: var(--good); font-weight: 700; }
+  .bad { color: var(--warn-edge); font-weight: 700; }
 
-  footer { margin-top: 70px; border-top: 1px solid var(--line); padding: 26px 0 50px; color: var(--ink-3); font-size: .85rem; }
-  .good { color: var(--good); font-weight: 600; }
-  .bad { color: var(--warn-edge); font-weight: 600; }
+  ul.links { list-style: none; padding: 0; }
+  ul.links li { padding: 12px 0; border-bottom: 1px solid var(--line); }
+  ul.links li:last-child { border-bottom: none; }
+
+  footer { margin-top: 84px; background: var(--navy-900); color: #93a7bd; padding: 40px 0 48px; font-size: .87rem; }
+  footer a { color: #b9cde2; }
+  footer .cols { display: flex; flex-wrap: wrap; gap: 12px 48px; justify-content: space-between; }
 </style>
 </head>
 <body>
 
-<header class="hero">
-  <div class="wrap">
-    <h1>Ball-Bearing Defect Segmentation<br>— from a GB10 workstation to a 100-TOPS edge NPU</h1>
-    <p class="sub">A YOLOv8 detector and a Segment-Anything mask generator, chained so that every detected defect
-    gets a pixel-accurate mask with <em>zero segmentation labels</em> — first as a full-precision benchmark on an
-    NVIDIA GB10, then ported to the Qualcomm Dragonwing IQ-9075 NPU, with the quantization and conversion
-    losses measured along the way.</p>
-    <div class="meta">Mushfiq · June–July 2026 · built with Claude Code ·
-      <a href="https://github.com/MushfiqShovon/SAMwithBallbearing">code repository</a></div>
+<nav class="nav"><div class="wrap">
+  <a class="brand" href="#top">BearingDefect<span class="dot">·</span>EdgeAI</a>
+  <div class="navlinks">
+    <a href="#idea">Approach</a><a href="#dataset">Dataset</a><a href="#training">Training</a>
+    <a href="#benchmark">Benchmark</a><a href="#edge">NPU Port</a><a href="#quant">Quantization</a>
+    <a href="#compare">GPU vs NPU</a><a href="#perf">Performance</a><a href="#lessons">Takeaways</a><a href="#resources">Links</a>
+  </div>
+</div></nav>
 
-    <div class="kpis">
-      <div class="kpi"><div class="v">0.895</div><div class="l">YOLOv8s mAP@50 (val)</div><div class="d">3 defect classes, 582 val images</div></div>
-      <div class="kpi"><div class="v">100%</div><div class="l">model ops on the NPU</div><div class="d">497 + 866 ops, zero CPU/GPU fallback</div></div>
-      <div class="kpi"><div class="v">≈ 0.003</div><div class="l">FP16-on-NPU confidence delta</div><div class="d">vs FP32 reference, after the fix</div></div>
-      <div class="kpi"><div class="v">~6–7 fps</div><div class="l">full pipeline on-device</div><div class="d">detector + mask per defect, ~150 ms/img</div></div>
+<header class="hero" id="top">
+  <div class="wrap">
+    <span class="eyebrow">Edge AI · Industrial Inspection · Case Study</span>
+    <h1>Ball-Bearing Defect Segmentation, from a GPU Workstation to a 100-TOPS Edge NPU</h1>
+    <p class="sub">I trained a YOLOv8 defect detector and paired it with Segment Anything so that every
+    detected defect gets a pixel-accurate mask, without labeling a single mask. The pipeline runs in full
+    precision on an NVIDIA GB10 as the quality benchmark, and on the Qualcomm Dragonwing IQ-9075 NPU for the
+    edge. Along the way I measured exactly what quantization and model conversion cost, and hit one failure
+    mode worth reading about.</p>
+    <div class="meta">Mushfiq &nbsp;·&nbsp; Summer 2026</div>
+    <div class="btnrow">
+      <a class="btn primary" href="https://github.com/MushfiqShovon/MobileSAM_BallBearing">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+        NPU implementation (IQ-9075)</a>
+      <a class="btn ghost" href="https://github.com/MushfiqShovon/SAMwithBallbearing">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+        Desktop pipeline (GB10)</a>
     </div>
   </div>
 </header>
 
-<nav class="toc"><div class="wrap">
-  <a href="#pipeline">Pipeline</a><a href="#dataset">Dataset</a><a href="#training">Training</a>
-  <a href="#benchmark">GB10 benchmark</a><a href="#edge">Edge port</a><a href="#quant">Quantization lesson</a>
-  <a href="#compare">GPU vs NPU</a><a href="#perf">On-device speed</a><a href="#lessons">Lessons</a><a href="#resources">Resources</a>
-</div></nav>
+<div class="kpiband"><div class="wrap">
+  <div class="kpis">
+    <div class="kpi"><div class="v">0.895</div><div class="l">detector mAP@50</div><div class="d">YOLOv8s, 3 defect classes, 582 validation images</div></div>
+    <div class="kpi"><div class="v">100%</div><div class="l">of model ops on the NPU</div><div class="d">1,363 ops across both SAM models, no CPU or GPU fallback</div></div>
+    <div class="kpi"><div class="v">≈0.003</div><div class="l">confidence drift on the NPU</div><div class="d">FP16 on-device vs the FP32 workstation reference</div></div>
+    <div class="kpi"><div class="v">~6–7 fps</div><div class="l">end-to-end on device</div><div class="d">detection plus a mask for every defect, ~150 ms/image</div></div>
+  </div>
+</div></div>
 
 <main class="wrap">
 
-<h2 id="pipeline">1 · The pipeline</h2>
-<p>Manufacturing datasets rarely come with segmentation masks. The core idea here: train only a
-<strong>box detector</strong> (cheap labels), then let a promptable segmenter turn each box into a mask at
-inference time. Each YOLO box is fed to SAM as a box prompt — top-left and bottom-right corners become a
-2-point prompt — and SAM returns the defect mask, zero-shot.</p>
+<section id="idea">
+  <div class="sec-eyebrow">01 — Approach</div>
+  <h2>Masks without mask labels</h2>
+  <p>Getting pixel-level defect annotations for manufacturing data is slow and expensive, and the public
+  dataset I used doesn't have any. What it can support is a box detector, since bounding boxes are cheap to
+  label. The trick that makes segmentation possible anyway: Segment Anything accepts a bounding box as a
+  prompt. So the detector finds each defect, the box corners go to SAM as a two-point prompt, and SAM returns
+  the mask. No segmentation training, no mask labels, and the detector's class label rides along with each mask.</p>
 
-<div class="flow">
-  <span class="step">image</span><span class="arr">→</span>
-  <span class="step">YOLOv8s <em>(boxes + classes)</em></span><span class="arr">→</span>
-  <span class="step">box corners as prompts</span><span class="arr">→</span>
-  <span class="step">SAM / MobileSAM <em>(masks)</em></span><span class="arr">→</span>
-  <span class="step">per-class overlay</span>
-</div>
+  <div class="flow">
+    <span class="step">image</span><span class="arr">→</span>
+    <span class="step">YOLOv8s <em>(boxes + classes)</em></span><span class="arr">→</span>
+    <span class="step">box corners as prompts</span><span class="arr">→</span>
+    <span class="step">SAM / MobileSAM <em>(masks)</em></span><span class="arr">→</span>
+    <span class="step">per-class overlay</span>
+  </div>
 
-<p>Two implementations of the same design:</p>
-<div class="tablewrap"><table>
-  <tr><th></th><th>Benchmark (workstation)</th><th>Edge (embedded)</th></tr>
-  <tr><td>Hardware</td><td>NVIDIA GB10 (Grace-Blackwell, sm_121)</td><td>Qualcomm Dragonwing IQ-9075 — Hexagon HTP <code>v73</code>, 100 TOPS</td></tr>
-  <tr><td>Detector</td><td>YOLOv8s FP32 (PyTorch)</td><td>YOLOv8s <strong>FP16</strong> (QNN context binary)</td></tr>
-  <tr><td>Segmenter</td><td>SAM 1.0 ViT-H — 637 M-param encoder</td><td><strong>MobileSAM</strong> — TinyViT 5 M-param encoder, FP16</td></tr>
-  <tr><td>Runtime</td><td>ultralytics + segment-anything</td><td>ONNX Runtime QNN EP (plugin) on Qualcomm Ubuntu</td></tr>
-</table></div>
+  <p>I built the same pipeline twice:</p>
+  <div class="tablewrap"><table>
+    <thead><tr><th></th><th>Workstation benchmark</th><th>Edge deployment</th></tr></thead>
+    <tbody>
+    <tr><td>Hardware</td><td>NVIDIA GB10 (Grace-Blackwell)</td><td>Qualcomm Dragonwing IQ-9075, Hexagon HTP v73, 100 TOPS</td></tr>
+    <tr><td>Detector</td><td>YOLOv8s, FP32 PyTorch</td><td>YOLOv8s, FP16 QNN context binary</td></tr>
+    <tr><td>Segmenter</td><td>SAM 1.0 ViT-H (637M-param encoder)</td><td>MobileSAM (TinyViT, 5M-param encoder), FP16</td></tr>
+    <tr><td>Runtime</td><td>ultralytics + segment-anything</td><td>ONNX Runtime QNN EP on Qualcomm Ubuntu</td></tr>
+    </tbody>
+  </table></div>
+  <p>The workstation version is the benchmark; everything the NPU produces gets judged against it.</p>
+</section>
 
-<h2 id="dataset">2 · Dataset — and the hunt for the labels</h2>
-<p>The images come from a public bearing-defect dataset by <em>Kangning Li</em> (figshare, CC0): 5,824
-processed 554×416 images across three surface-defect classes — <code>aocao</code> (groove),
-<code>cashang</code> (scratch), <code>huahen</code> (scratch-mark). The catch: the dataset article contains
-<strong>no annotations at all</strong>.</p>
-<div class="callout">
-  <strong>The labels were hiding in the code.</strong> All three figshare articles share one author. The source
-  paper (<em>"Bearing defect detection based on the improved YOLOv5 algorithm," PLOS One 2024</em>) says labels
-  were made with LabelImg — and archive inspection revealed a <code>zhou/</code> folder inside the author's
-  YOLOv3/YOLOv5 code archives holding the complete labeled split: <strong>4,660 train / 582 val</strong>
-  image-label pairs in YOLO txt format, three balanced classes. No hand-annotation was needed after all.
-</div>
+<section id="dataset">
+  <div class="sec-eyebrow">02 — Data</div>
+  <h2>The dataset, and where the labels were hiding</h2>
+  <p>The images are from a public bearing-defect dataset by Kangning Li on figshare (CC0): 5,824 images at
+  554×416, covering three surface defect types, <code>aocao</code> (groove), <code>cashang</code> (scratch)
+  and <code>huahen</code> (scratch-mark). The dataset article itself ships images only, no annotations, which
+  at first looked like a dead end for training anything.</p>
+  <div class="callout">
+    <strong>The labels existed, just not where I expected.</strong> All three related figshare articles have
+    the same author, and the companion paper (PLOS One, 2024) mentions LabelImg annotations. Digging through
+    the author's YOLO <em>code</em> archives turned up a <code>zhou/</code> folder with the complete labeled
+    split: 4,660 training and 582 validation image–label pairs in YOLO format, with all three classes well
+    represented. That saved weeks of annotation work.
+  </div>
+</section>
 
-<h2 id="training">3 · Training the detector (GB10)</h2>
-<p>YOLOv8s fine-tuned from COCO weights — 640 px, batch 32, AdamW, 100 epochs (1.58 h on the GB10).
-One hardware lesson first: the GB10 is compute capability sm_121, and PyTorch's CUDA-12.8 wheels crash in
-nvrtc JIT on it — the <strong>CUDA-13 (cu130) build is mandatory</strong> on this machine.</p>
+<section id="training">
+  <div class="sec-eyebrow">03 — Training</div>
+  <h2>Training the detector</h2>
+  <p>YOLOv8s, fine-tuned from COCO weights at 640&nbsp;px, batch 32, 100 epochs. Training took about 1.6 hours
+  on the GB10. The first attempt actually crashed inside an nvrtc JIT call; the GB10's Blackwell GPU
+  (compute capability 12.1) isn't known to PyTorch's CUDA 12.8 wheels, and switching to the CUDA 13 build
+  fixed it. Worth knowing if you have one of these machines.</p>
 
-<div class="tablewrap"><table>
-  <tr><th>Class</th><th class="num">Images</th><th class="num">Instances</th><th class="num">Precision</th><th class="num">Recall</th><th class="num">mAP@50</th><th class="num">mAP@50-95</th></tr>
-  <tr class="hl"><td>all</td><td class="num">582</td><td class="num">2039</td><td class="num">0.933</td><td class="num">0.867</td><td class="num">0.895</td><td class="num">0.637</td></tr>
-  <tr><td>aocao (groove)</td><td class="num">558</td><td class="num">1499</td><td class="num">0.970</td><td class="num">0.963</td><td class="num">0.977</td><td class="num">0.720</td></tr>
-  <tr><td>cashang (scratch)</td><td class="num">146</td><td class="num">219</td><td class="num">0.990</td><td class="num">0.885</td><td class="num">0.937</td><td class="num">0.757</td></tr>
-  <tr><td>huahen (scratch-mark)</td><td class="num">196</td><td class="num">321</td><td class="num">0.841</td><td class="num">0.754</td><td class="num">0.769</td><td class="num">0.433</td></tr>
-</table></div>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Class</th><th class="num">Images</th><th class="num">Instances</th><th class="num">Precision</th><th class="num">Recall</th><th class="num">mAP@50</th><th class="num">mAP@50-95</th></tr></thead>
+    <tbody>
+    <tr class="hl"><td>all</td><td class="num">582</td><td class="num">2039</td><td class="num">0.933</td><td class="num">0.867</td><td class="num">0.895</td><td class="num">0.637</td></tr>
+    <tr><td>aocao (groove)</td><td class="num">558</td><td class="num">1499</td><td class="num">0.970</td><td class="num">0.963</td><td class="num">0.977</td><td class="num">0.720</td></tr>
+    <tr><td>cashang (scratch)</td><td class="num">146</td><td class="num">219</td><td class="num">0.990</td><td class="num">0.885</td><td class="num">0.937</td><td class="num">0.757</td></tr>
+    <tr><td>huahen (scratch-mark)</td><td class="num">196</td><td class="num">321</td><td class="num">0.841</td><td class="num">0.754</td><td class="num">0.769</td><td class="num">0.433</td></tr>
+    </tbody>
+  </table></div>
 
-<div class="imgrow">
-  <figure><img src="assets/training_curves.png" alt="Training and validation loss/metric curves over 100 epochs" loading="lazy">
-    <figcaption>Loss and metric curves over 100 epochs — clean convergence, no overfitting signature.</figcaption></figure>
-  <figure><img src="assets/confusion_matrix.png" alt="Normalized confusion matrix for the three defect classes" loading="lazy">
-    <figcaption>Normalized confusion matrix. <code>huahen</code> (subtle scratch-marks) is the hardest class.</figcaption></figure>
-</div>
+  <div class="imgrow">
+    <figure><img src="assets/training_curves.png" alt="Training and validation loss and metric curves over 100 epochs" loading="lazy">
+      <figcaption>Loss and metric curves across the 100 epochs. Convergence is clean, with no sign of overfitting.</figcaption></figure>
+    <figure><img src="assets/confusion_matrix.png" alt="Normalized confusion matrix for the three defect classes" loading="lazy">
+      <figcaption>Normalized confusion matrix. The subtle scratch-marks (huahen) are clearly the hardest of the three.</figcaption></figure>
+  </div>
+</section>
 
-<h2 id="benchmark">4 · The GB10 benchmark: YOLO + SAM ViT-H</h2>
-<p>On the workstation, each YOLO box is handed to SAM 1.0 (ViT-H checkpoint, 2.4 GB) as a batched box prompt
-— one image-encoder pass per image, all boxes decoded in a single call. This full-precision pipeline is the
-project's <strong>quality reference</strong> for everything that follows.</p>
+<section id="benchmark">
+  <div class="sec-eyebrow">04 — Benchmark</div>
+  <h2>The workstation pipeline: YOLO + SAM ViT-H</h2>
+  <p>On the GB10 I run the largest SAM checkpoint (ViT-H, 2.4&nbsp;GB). The image encoder runs once per
+  image, and all detected boxes are segmented in a single batched decoder call, which keeps things around
+  five milliseconds per image for detection plus a fraction of a second for the masks. Mask colors follow
+  the class: red for grooves, yellow for scratches, blue for scratch-marks.</p>
 
-<div class="imgrow">
-  <figure><img src="assets/detect_demo.jpg" alt="YOLO detection demo: bounding boxes with class and confidence" loading="lazy">
-    <figcaption>Stage 1 — YOLOv8s boxes with class + confidence.</figcaption></figure>
-  <figure><img src="assets/seg_demo_1.jpg" alt="YOLO+SAM segmentation demo with per-class colored masks" loading="lazy">
-    <figcaption>Stage 2 — SAM masks from box prompts. 🔴 aocao · 🟡 cashang · 🔵 huahen.</figcaption></figure>
-</div>
-<div class="imgrow">
-  <figure><img src="assets/seg_demo_2.jpg" alt="Segmentation example on a dark bearing ring" loading="lazy">
-    <figcaption>Thin scratch-marks segmented on a dark ring.</figcaption></figure>
-  <figure><img src="assets/seg_demo_3.jpg" alt="Segmentation example with groove and scratch classes" loading="lazy">
-    <figcaption>Groove + scratch instances, tightly traced.</figcaption></figure>
-</div>
+  <div class="imgrow">
+    <figure><img src="assets/detect_demo.jpg" alt="YOLO detection stage showing bounding boxes with class and confidence" loading="lazy">
+      <figcaption>Stage one, detection only: class and confidence per box.</figcaption></figure>
+    <figure><img src="assets/seg_demo_1.jpg" alt="Full segmentation output with per-class colored masks" loading="lazy">
+      <figcaption>Stage two, after SAM: each box turned into a mask.</figcaption></figure>
+  </div>
+  <div class="imgrow" style="margin-top:18px">
+    <figure><img src="assets/seg_demo_2.jpg" alt="Segmentation of thin scratch-marks on a dark bearing ring" loading="lazy">
+      <figcaption>Thin scratch-marks on a dark ring.</figcaption></figure>
+    <figure><img src="assets/seg_demo_3.jpg" alt="Groove and scratch segmentation example" loading="lazy">
+      <figcaption>Grooves and scratches, tightly traced.</figcaption></figure>
+  </div>
+</section>
 
-<h2 id="edge">5 · Porting to the IQ-9075 NPU</h2>
-<p>The target: run <em>everything heavy</em> on the board's Hexagon HTP (hexagon v73, soc id 77). Three
-realities shaped the port:</p>
-<div class="cards">
-  <div class="card"><h4>ViT-H cannot run on an NPU</h4><p>A 637 M-parameter encoder is far beyond HTP budgets.
-    Swapped for <strong>MobileSAM</strong> (5 M TinyViT encoder, near-equivalent masks). Box prompts survive the
-    swap: corners → 2 labeled points.</p></div>
-  <div class="card"><h4>HTP compilation needs Qualcomm silicon</h4><p>Local <code>yolo export format=qnn</code>
-    dies on non-Qualcomm hosts. Everything was compiled in the <strong>Qualcomm AI Hub cloud</strong> for the
-    exact device — which also profiles on a real hosted IQ-9075.</p></div>
-  <div class="card"><h4>Runtime = ONNX Runtime QNN EP</h4><p>AI Hub's <code>precompiled_qnn_onnx</code> wraps each
-    HTP context binary in an ONNX file — loadable from Python via <code>onnxruntime-qnn</code>. On ORT ≥ 1.24 the
-    QNN EP is a plugin that must be explicitly registered.</p></div>
-</div>
+<section id="edge">
+  <div class="sec-eyebrow">05 — Deployment</div>
+  <h2>Porting it to the IQ-9075</h2>
+  <p>The goal on the board was to keep every heavy computation on the Hexagon NPU. Three things shaped how
+  the port actually went:</p>
+  <div class="cards">
+    <div class="card accent"><h4>ViT-H doesn't fit an NPU</h4><p>A 637M-parameter encoder is far beyond what
+      the HTP can hold. I swapped in MobileSAM, whose 5M-parameter TinyViT encoder produces very similar
+      masks. Box prompting survives the swap unchanged.</p></div>
+    <div class="card accent"><h4>HTP compilation needs Qualcomm silicon</h4><p>Compiling locally fails on
+      non-Qualcomm machines, so all models were compiled through Qualcomm AI Hub for this exact SoC. AI Hub
+      also profiles the compiled model on a real hosted IQ-9075, which turned out to be very useful.</p></div>
+    <div class="card accent"><h4>The runtime is ONNX Runtime's QNN EP</h4><p>AI Hub wraps each compiled HTP
+      binary in an ONNX file that ONNX Runtime can load from Python. One catch: on recent ONNX Runtime
+      versions the QNN provider is a plugin that has to be registered explicitly before it exists.</p></div>
+  </div>
 
-<div class="flow">
-  <span class="step">best.pt</span><span class="arr">→</span>
-  <span class="step">ONNX (sanitized)</span><span class="arr">→</span>
-  <span class="step npu">AI Hub compile → HTP context binary</span><span class="arr">→</span>
-  <span class="step npu">ONNX Runtime QNN EP on the board</span>
-</div>
+  <div class="flow">
+    <span class="step">best.pt</span><span class="arr">→</span>
+    <span class="step">ONNX export</span><span class="arr">→</span>
+    <span class="step npu">AI Hub compile → HTP context binary</span><span class="arr">→</span>
+    <span class="step npu">ONNX Runtime QNN EP on the board</span>
+  </div>
+  <p>The full on-device implementation, including the runner script and deployment notes, is in the
+  <a href="https://github.com/MushfiqShovon/MobileSAM_BallBearing">MobileSAM_BallBearing</a> repository.</p>
+</section>
 
-<h2 id="quant">6 · The quantization lesson <span class="pill">the key finding</span></h2>
-<p>The first production build quantized YOLO to <strong>W8A16</strong> (INT8 weights / INT16 activations,
-100 calibration images) — the standard recipe for using an NPU's full INT8 throughput. It compiled cleanly,
-ran fully on the HTP… and detected almost nothing.</p>
+<section id="quant">
+  <div class="sec-eyebrow">06 — The interesting failure</div>
+  <h2>What quantization broke, and how I found it</h2>
+  <p>My first production build quantized the detector to W8A16 (INT8 weights, INT16 activations), which is the
+  textbook way to use an NPU's full integer throughput. It compiled cleanly, every op mapped to the HTP, and
+  the board ran it happily. The detections, however, were visibly worse than the workstation's, and once I
+  looked at the raw numbers the problem was unmistakable.</p>
 
-<div class="callout warn">
-  <strong>Failure signature:</strong> every class confidence collapsed to exactly <strong>0.50</strong> —
-  <code>sigmoid(0)</code> — versus 0.90–0.93 in full precision. Reproduced with the quantized QDQ model on a
-  plain CPU: <em>the model itself was broken before it ever reached the NPU.</em>
-</div>
+  <div class="callout warn">
+    Every class confidence came out at exactly <strong>0.50</strong>, which is sigmoid(0), instead of the
+    0.90–0.93 the FP32 model produces. And the same thing happened when I ran the quantized model on a plain
+    CPU, no NPU involved. The model was broken before it ever reached the board.
+  </div>
 
-<p><strong>Root cause.</strong> The Ultralytics YOLOv8 export is an end-to-end graph whose head
-<em>concatenates box coordinates (range 0–640) and class probabilities (range 0–1) into one output tensor</em>
-— post-training quantization must pick a single scale (0.0104 for range [0, 682]) for both, and the DFL/anchor
-decode arithmetic gets quantized with it. The class-score information is crushed. This is a known YOLO PTQ
-failure mode; Qualcomm's own <code>yolov8_det</code> recipe restructures the head before quantizing for exactly
-this reason.</p>
+  <p>The root cause sits in how Ultralytics exports YOLOv8: it's one end-to-end graph whose head concatenates
+  box coordinates (values up to 640) and class probabilities (values up to 1) into a single output tensor.
+  Post-training quantization has to pick one scale for that tensor, and the box range wins; on top of that,
+  the box-decoding arithmetic inside the head gets quantized too. The class scores simply don't survive.
+  This turns out to be a known weakness of quantizing YOLO exports whole, and it's why Qualcomm's own
+  YOLOv8 recipe restructures the head before quantizing.</p>
 
-<p><strong>Fix.</strong> Ship the detector in <strong>FP16</strong> instead (the HTP supports FP16 natively;
-FP32 never). Verified end-to-end on a hosted IQ-9075 with real bearing images before redeploying:</p>
+  <p>The fix I shipped is straightforward: run the detector in FP16, which the HTP supports natively. Before
+  redeploying I verified the FP16 build on a hosted IQ-9075 with real bearing images:</p>
 
-<div class="tablewrap"><table>
-  <tr><th>Image</th><th class="num">FP32 reference (top-3 conf)</th><th class="num">NPU FP16 (top-3 conf)</th><th class="num">NPU W8A16 (broken)</th></tr>
-  <tr><td>1000.jpg</td><td class="num">0.921 / 0.916 / 0.913</td><td class="num"><span class="good">0.918 / 0.914 / 0.910</span></td><td class="num"><span class="bad">0.500</span></td></tr>
-  <tr><td>1001.jpg</td><td class="num">0.912 / 0.908 / 0.906</td><td class="num"><span class="good">0.908 / 0.902 / 0.900</span></td><td class="num"><span class="bad">0.500</span></td></tr>
-  <tr><td>1002.jpg</td><td class="num">0.932 / 0.932 / 0.932</td><td class="num"><span class="good">0.931 / 0.930 / 0.930</span></td><td class="num"><span class="bad">0.500</span></td></tr>
-</table></div>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Image</th><th class="num">FP32 reference (top-3 conf.)</th><th class="num">NPU FP16 (top-3 conf.)</th><th class="num">NPU W8A16</th></tr></thead>
+    <tbody>
+    <tr><td>1000.jpg</td><td class="num">0.921 / 0.916 / 0.913</td><td class="num"><span class="good">0.918 / 0.914 / 0.910</span></td><td class="num"><span class="bad">0.500</span></td></tr>
+    <tr><td>1001.jpg</td><td class="num">0.912 / 0.908 / 0.906</td><td class="num"><span class="good">0.908 / 0.902 / 0.900</span></td><td class="num"><span class="bad">0.500</span></td></tr>
+    <tr><td>1002.jpg</td><td class="num">0.932 / 0.932 / 0.932</td><td class="num"><span class="good">0.931 / 0.930 / 0.930</span></td><td class="num"><span class="bad">0.500</span></td></tr>
+    </tbody>
+  </table></div>
 
-<p>Two more defects were caught in the same investigation: the EPContext model initially exposed
-<strong>uint16 IO</strong> (compiled with <code>--quantize_io</code>; scale/zero-point unrecoverable on the
-board — recompiled with float32 IO), and the runner's NMS passed <code>xyxy</code> boxes to an API expecting
-<code>xywh</code>. Both fixed and committed.</p>
+  <p>The same investigation surfaced two smaller bugs that are easy to hit: compiling with quantized model
+  I/O exposes uint16 tensors whose scale and zero-point the board code can't recover (keep model I/O in
+  float32 and let the compiled context convert internally), and OpenCV's NMS API expects boxes as
+  <code>x,y,w,h</code> where I was passing corner coordinates. Both fixed.</p>
+</section>
 
-<h2 id="compare">7 · GPU vs NPU — the measured gap</h2>
-<p>With the FP16 fix deployed, both pipelines ran the same 152 input images. A comparison tool recovers the
-per-class annotation masks from the rendered outputs (diff vs pristine input, nearest class-color assignment)
-and scores agreement:</p>
+<section id="compare">
+  <div class="sec-eyebrow">07 — Results</div>
+  <h2>How close is the NPU to the workstation?</h2>
+  <p>With the FP16 detector deployed, I ran both pipelines over the same 152 input images and wrote a small
+  tool that recovers the annotation masks from each rendered output and scores the agreement between the two
+  sets:</p>
 
-<div class="tablewrap"><table>
-  <tr><th>Class</th><th class="num">Mean overlay IoU</th><th class="num">Median</th><th class="num">Defects (GB10)</th><th class="num">Defects (NPU)</th></tr>
-  <tr><td>aocao (groove)</td><td class="num">0.38</td><td class="num">0.36</td><td class="num">578</td><td class="num">554</td></tr>
-  <tr><td>cashang (scratch)</td><td class="num">0.69</td><td class="num">0.69</td><td class="num">480</td><td class="num">527</td></tr>
-  <tr><td>huahen (scratch-mark)</td><td class="num">0.38</td><td class="num">0.47</td><td class="num">110</td><td class="num">118</td></tr>
-  <tr class="hl"><td>overall (any class)</td><td class="num">0.71</td><td class="num">0.70</td><td class="num">—</td><td class="num">—</td></tr>
-</table></div>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Class</th><th class="num">Mean overlay IoU</th><th class="num">Median</th><th class="num">Defects (GB10)</th><th class="num">Defects (NPU)</th></tr></thead>
+    <tbody>
+    <tr><td>aocao (groove)</td><td class="num">0.38</td><td class="num">0.36</td><td class="num">578</td><td class="num">554</td></tr>
+    <tr><td>cashang (scratch)</td><td class="num">0.69</td><td class="num">0.69</td><td class="num">480</td><td class="num">527</td></tr>
+    <tr><td>huahen (scratch-mark)</td><td class="num">0.38</td><td class="num">0.47</td><td class="num">110</td><td class="num">118</td></tr>
+    <tr class="hl"><td>overall (any class)</td><td class="num">0.71</td><td class="num">0.70</td><td class="num">—</td><td class="num">—</td></tr>
+    </tbody>
+  </table></div>
 
-<p>Reading the numbers with the images: <strong>detection agrees almost perfectly</strong> — boxes land in the
-same places with confidences within ~0.01, and per-class defect totals agree within 5–10%. The residual IoU gap
-is dominated by <strong>mask-shape differences between SAM ViT-H and MobileSAM</strong> (expected by design:
-637 M vs 5 M encoder) and by IoU's sensitivity on tiny masks — a few boundary pixels on a small groove crush
-the score even when both models mark the same defect.</p>
+  <p>The numbers make more sense next to the images. Detection agrees almost perfectly: boxes land in the
+  same places, confidences are within about 0.01, and the per-class defect totals differ by only 5–10%.
+  What drags the IoU down is mask shape, which is exactly where the two segmenters differ by design; ViT-H
+  traces thin scratches more crisply than MobileSAM does, and on very small grooves a handful of boundary
+  pixels is enough to sink the IoU even when both models mark the same defect.</p>
 
-<figure class="scrollfig"><img src="assets/compare_typical.jpg" alt="Typical comparison: input, GB10 FP32 output, NPU output side by side" loading="lazy">
-  <figcaption>Typical case (1000.jpg) — left: input · middle: GB10 FP32 (YOLO+SAM) · right: IQ-9075 NPU (YOLO+MobileSAM).
-  Same three detections, confidences within 0.01; the third mask shows MobileSAM flooding slightly wider than ViT-H.</figcaption></figure>
+  <figure class="scrollfig"><img src="assets/compare_typical.jpg" alt="Typical comparison sheet: input image, GB10 FP32 output, NPU output side by side" loading="lazy">
+    <figcaption>A typical case. Left: input. Middle: GB10 FP32 (YOLO + SAM ViT-H). Right: IQ-9075 NPU (YOLO + MobileSAM).
+    Same three detections, confidences within 0.01; on the third defect MobileSAM's mask floods a little wider than ViT-H's.</figcaption></figure>
 
-<figure class="scrollfig"><img src="assets/compare_worst.jpg" alt="Worst-agreement comparison sheet" loading="lazy">
-  <figcaption>Worst-agreement case (1100.jpg, IoU 0.39) — detections still match (0.93/0.90 vs 0.92/0.89);
-  the disagreement is entirely in how the two segmenters outline a large diffuse scratch.</figcaption></figure>
+  <figure class="scrollfig"><img src="assets/compare_worst.jpg" alt="Worst-agreement comparison sheet" loading="lazy">
+    <figcaption>The worst-agreement image in the set (IoU 0.39). The detections still match; the two segmenters just
+    outline a large, diffuse scratch very differently.</figcaption></figure>
 
-<figure class="scrollfig"><img src="assets/compare_2.jpg" alt="Additional comparison sheet" loading="lazy">
-  <figcaption>Another example (1002.jpg) — near-identical boxes and masks.</figcaption></figure>
+  <figure class="scrollfig"><img src="assets/compare_2.jpg" alt="Additional comparison sheet with near identical outputs" loading="lazy">
+    <figcaption>Another example, near-identical boxes and masks.</figcaption></figure>
+</section>
 
-<h2 id="perf">8 · On-device performance</h2>
-<p>Measured by Qualcomm AI Hub profile jobs on a real hosted Dragonwing IQ-9075 EVK:</p>
-<div class="tablewrap"><table>
-  <tr><th>Model (FP16)</th><th class="num">Latency</th><th class="num">Ops on NPU</th><th class="num">Peak memory</th><th class="num">PSNR vs FP32</th></tr>
-  <tr><td>MobileSAM encoder</td><td class="num">101.6 ms</td><td class="num">497 / 497</td><td class="num">12–30 MB</td><td class="num">46.9 dB</td></tr>
-  <tr><td>MobileSAM decoder (per box)</td><td class="num">6.0 ms</td><td class="num">866 / 866</td><td class="num">4–10 MB</td><td class="num">60.5 dB</td></tr>
-</table></div>
-<p>With YOLO at ~10–25 ms, the full pipeline lands around <strong>140–160 ms per image (~6–7 fps), entirely
-on the NPU</strong> — encoder once per image plus 6 ms per detected defect. PSNR ≥ 30 dB is the usual
-"good" bar; 47–60 dB means the HTP output is numerically near-identical to desktop FP32.</p>
+<section id="perf">
+  <div class="sec-eyebrow">08 — Performance</div>
+  <h2>Speed on the device</h2>
+  <p>These numbers come from AI Hub profile jobs on a real hosted IQ-9075 EVK, not an emulator:</p>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Model (FP16)</th><th class="num">Latency</th><th class="num">Ops on NPU</th><th class="num">Peak memory</th><th class="num">PSNR vs FP32</th></tr></thead>
+    <tbody>
+    <tr><td>MobileSAM encoder</td><td class="num">101.6 ms</td><td class="num">497 / 497</td><td class="num">12–30 MB</td><td class="num">46.9 dB</td></tr>
+    <tr><td>MobileSAM decoder (per defect)</td><td class="num">6.0 ms</td><td class="num">866 / 866</td><td class="num">4–10 MB</td><td class="num">60.5 dB</td></tr>
+    </tbody>
+  </table></div>
+  <p>With the detector adding roughly 10–25 ms, a full image lands around 140–160 ms, or 6–7 frames per
+  second, entirely on the NPU. The encoder runs once per image and the decoder once per defect. For
+  reference, 30 dB PSNR is usually considered good agreement; 47–60 dB means the NPU output is numerically
+  almost indistinguishable from desktop full precision.</p>
+</section>
 
-<h2 id="lessons">9 · Lessons learned</h2>
-<div class="cards">
-  <div class="card"><h4>PTQ can silently destroy a YOLO head</h4><p>Mixed-range concat outputs (boxes 0–640 +
-    probs 0–1) under one quant scale collapse class scores. Test the quantized model <em>off-device first</em> —
-    a CPU run of the QDQ graph reproduces it in seconds.</p></div>
-  <div class="card"><h4>FP16 on modern HTP is a legitimate production path</h4><p>Zero calibration, near-zero
-    accuracy loss, still 100% on-NPU. INT8 is an optimization, not a prerequisite.</p></div>
-  <div class="card"><h4>Compile in the cloud, not on the host</h4><p>QNN's HTP backend won't initialize on
-    non-Qualcomm machines. AI Hub compiles for the exact SoC and profiles on real hardware before you touch
-    the board.</p></div>
-  <div class="card"><h4>Check tensor layouts on compiled artifacts</h4><p>AI-Hub MobileSAM EPContext models are
-    NHWC (channels-last); the YOLO one stays NCHW. Assume nothing — read the ONNX IO.</p></div>
-  <div class="card"><h4>Don't ship <code>--quantize_io</code> to a float pipeline</h4><p>Quantized IO exposes
-    uint16 tensors whose scale/zero-point the board code can't recover. Keep model IO float32; let the context
-    convert internally.</p></div>
-  <div class="card"><h4>Labels may exist where you least expect</h4><p>An "images-only" dataset had its full
-    YOLO label set hiding inside the author's code archives. Read the paper, inspect the archives, then
-    annotate.</p></div>
-</div>
+<section id="lessons">
+  <div class="sec-eyebrow">09 — Takeaways</div>
+  <h2>Things I'd tell anyone doing this</h2>
+  <div class="cards">
+    <div class="card"><h4>Test quantized models off-device first</h4><p>My broken W8A16 build reproduced its
+      failure on a plain CPU in seconds. If I had checked that before deploying, I'd have saved a full
+      debug cycle on the board.</p></div>
+    <div class="card"><h4>PTQ can silently kill a YOLO head</h4><p>Box coordinates and class probabilities
+      sharing one output tensor means one quantization scale for ranges that differ by 640×. Either
+      restructure the head before quantizing or don't quantize it.</p></div>
+    <div class="card"><h4>FP16 on a modern NPU is a real option</h4><p>No calibration data, near-zero accuracy
+      loss, and still 100% of ops on the NPU. Integer quantization is an optimization to earn, not a
+      requirement.</p></div>
+    <div class="card"><h4>Check tensor layouts on compiled artifacts</h4><p>The compiled MobileSAM came out
+      channels-last while YOLO stayed channels-first. Nothing warns you; read the ONNX inputs before writing
+      the runner.</p></div>
+    <div class="card"><h4>Keep model I/O in float</h4><p>Quantized I/O exposes integer tensors whose scale and
+      zero-point your board code can't see. Let the compiled context handle conversion internally.</p></div>
+    <div class="card"><h4>Read the paper before annotating</h4><p>An "images-only" dataset had its complete
+      label set sitting inside the author's code archives. An hour of digging beat weeks of labeling.</p></div>
+  </div>
+</section>
 
-<h2 id="resources">10 · Resources</h2>
-<ul>
-  <li><strong>Code:</strong> <a href="https://github.com/MushfiqShovon/SAMwithBallbearing">github.com/MushfiqShovon/SAMwithBallbearing</a> — desktop pipeline, training scripts, NPU runner (<code>iq9075/</code>), comparison tool (<code>tools/compare_outputs.py</code>)</li>
-  <li><strong>Dataset (figshare, CC0, by Kangning Li):</strong>
-    <a href="https://doi.org/10.6084/m9.figshare.25335076">images</a> ·
-    <a href="https://doi.org/10.6084/m9.figshare.26197928">YOLO archives incl. labels</a> ·
-    <a href="https://doi.org/10.6084/m9.figshare.26421013">YOLOv9</a></li>
-  <li><strong>Source paper:</strong> <a href="https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0310007">Bearing defect detection based on the improved YOLOv5 algorithm</a> — PLOS One, 2024</li>
-  <li><strong>Models:</strong> <a href="https://github.com/ultralytics/ultralytics">Ultralytics YOLOv8</a> ·
-    <a href="https://github.com/facebookresearch/segment-anything">Segment Anything</a> ·
-    <a href="https://github.com/ChaoningZhang/MobileSAM">MobileSAM</a></li>
-  <li><strong>Tooling:</strong> <a href="https://aihub.qualcomm.com">Qualcomm AI Hub</a> ·
-    <a href="https://onnxruntime.ai/docs/execution-providers/QNN-ExecutionProvider.html">ONNX Runtime QNN EP</a></li>
-</ul>
+<section id="resources">
+  <div class="sec-eyebrow">10 — Resources</div>
+  <h2>Code, data and references</h2>
+  <ul class="links">
+    <li><strong>NPU implementation:</strong> <a href="https://github.com/MushfiqShovon/MobileSAM_BallBearing">github.com/MushfiqShovon/MobileSAM_BallBearing</a> — the IQ-9075 pipeline: compiled-model runner, QNN EP setup, deployment notes</li>
+    <li><strong>Desktop pipeline:</strong> <a href="https://github.com/MushfiqShovon/SAMwithBallbearing">github.com/MushfiqShovon/SAMwithBallbearing</a> — training scripts, YOLO + SAM ViT-H benchmark, comparison tooling</li>
+    <li><strong>Dataset (figshare, CC0, by Kangning Li):</strong>
+      <a href="https://doi.org/10.6084/m9.figshare.25335076">images</a> ·
+      <a href="https://doi.org/10.6084/m9.figshare.26197928">YOLO archives, incl. the labels</a> ·
+      <a href="https://doi.org/10.6084/m9.figshare.26421013">YOLOv9 archive</a></li>
+    <li><strong>Companion paper:</strong> <a href="https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0310007">Bearing defect detection based on the improved YOLOv5 algorithm</a>, PLOS One, 2024</li>
+    <li><strong>Models:</strong> <a href="https://github.com/ultralytics/ultralytics">Ultralytics YOLOv8</a> ·
+      <a href="https://github.com/facebookresearch/segment-anything">Segment Anything</a> ·
+      <a href="https://github.com/ChaoningZhang/MobileSAM">MobileSAM</a></li>
+    <li><strong>Tooling:</strong> <a href="https://aihub.qualcomm.com">Qualcomm AI Hub</a> ·
+      <a href="https://onnxruntime.ai/docs/execution-providers/QNN-ExecutionProvider.html">ONNX Runtime QNN Execution Provider</a></li>
+  </ul>
+</section>
 
 </main>
 
 <footer><div class="wrap">
-  Ball-Bearing Defect Segmentation · Mushfiq (mr00131@mix.wvu.edu) · dataset CC0 by Kangning Li ·
-  page and pipeline built with Claude Code, 2026
+  <div class="cols">
+    <div>Ball-Bearing Defect Segmentation · Mushfiq · <a href="mailto:imran.wvu@gmail.com">imran.wvu@gmail.com</a></div>
+    <div>Dataset CC0 by Kangning Li · assisted by Claude Code</div>
+  </div>
 </div></footer>
 
 </body>
