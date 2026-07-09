@@ -163,10 +163,10 @@
   <div class="wrap">
     <span class="eyebrow">Edge AI · Industrial Inspection · Case Study</span>
     <h1>Ball-Bearing Defect Segmentation, from a GPU Workstation to a 100-TOPS Edge NPU</h1>
-    <p class="sub">I trained a YOLOv8 defect detector and paired it with Segment Anything so that every
+    <p class="sub">We trained a YOLOv8 defect detector and paired it with Segment Anything so that every
     detected defect gets a pixel-accurate mask, without labeling a single mask. The pipeline runs in full
     precision on an NVIDIA GB10 as the quality benchmark, and on the Qualcomm Dragonwing IQ-9075 NPU for the
-    edge. Along the way I measured exactly what quantization and model conversion cost, and hit one failure
+    edge. Along the way We measured exactly what quantization and model conversion cost, and hit one failure
     mode worth reading about.</p>
     <div class="meta">Mushfiq &nbsp;·&nbsp; Summer 2026</div>
     <div class="btnrow">
@@ -195,7 +195,7 @@
   <div class="sec-eyebrow">01 — Approach</div>
   <h2>Masks without mask labels</h2>
   <p>Getting pixel-level defect annotations for manufacturing data is slow and expensive, and the public
-  dataset I used doesn't have any. What it can support is a box detector, since bounding boxes are cheap to
+  dataset We used doesn't have any. What it can support is a box detector, since bounding boxes are cheap to
   label. The trick that makes segmentation possible anyway: Segment Anything accepts a bounding box as a
   prompt. So the detector finds each defect, the box corners go to SAM as a two-point prompt, and SAM returns
   the mask. No segmentation training, no mask labels, and the detector's class label rides along with each mask.</p>
@@ -208,7 +208,7 @@
     <span class="step">per-class overlay</span>
   </div>
 
-  <p>I built the same pipeline twice:</p>
+  <p>We built the same pipeline twice:</p>
   <div class="tablewrap"><table>
     <thead><tr><th></th><th>Workstation benchmark</th><th>Edge deployment</th></tr></thead>
     <tbody>
@@ -229,7 +229,7 @@
   and <code>huahen</code> (scratch-mark). The dataset article itself ships images only, no annotations, which
   at first looked like a dead end for training anything.</p>
   <div class="callout">
-    <strong>The labels existed, just not where I expected.</strong> All three related figshare articles have
+    <strong>The labels existed, just not where We expected.</strong> All three related figshare articles have
     the same author, and the companion paper (PLOS One, 2024) mentions LabelImg annotations. Digging through
     the author's YOLO <em>code</em> archives turned up a <code>zhou/</code> folder with the complete labeled
     split: 4,660 training and 582 validation image–label pairs in YOLO format, with all three classes well
@@ -266,7 +266,7 @@
 <section id="benchmark">
   <div class="sec-eyebrow">04 — Benchmark</div>
   <h2>The workstation pipeline: YOLO + SAM ViT-H</h2>
-  <p>On the GB10 I run the largest SAM checkpoint (ViT-H, 2.4&nbsp;GB). The image encoder runs once per
+  <p>On the GB10 We run the largest SAM checkpoint (ViT-H, 2.4&nbsp;GB). The image encoder runs once per
   image, and all detected boxes are segmented in a single batched decoder call, which keeps things around
   five milliseconds per image for detection plus a fraction of a second for the masks. Mask colors follow
   the class: red for grooves, yellow for scratches, blue for scratch-marks.</p>
@@ -292,7 +292,7 @@
   the port actually went:</p>
   <div class="cards">
     <div class="card accent"><h4>ViT-H doesn't fit an NPU</h4><p>A 637M-parameter encoder is far beyond what
-      the HTP can hold. I swapped in MobileSAM, whose 5M-parameter TinyViT encoder produces very similar
+      the HTP can hold. We swapped in MobileSAM, whose 5M-parameter TinyViT encoder produces very similar
       masks. Box prompting survives the swap unchanged.</p></div>
     <div class="card accent"><h4>HTP compilation needs Qualcomm silicon</h4><p>Compiling locally fails on
       non-Qualcomm machines, so all models were compiled through Qualcomm AI Hub for this exact SoC. AI Hub
@@ -314,15 +314,15 @@
 
 <section id="quant">
   <div class="sec-eyebrow">06 — The interesting failure</div>
-  <h2>What quantization broke, and how I found it</h2>
+  <h2>What quantization broke, and how We found it</h2>
   <p>My first production build quantized the detector to W8A16 (INT8 weights, INT16 activations), which is the
   textbook way to use an NPU's full integer throughput. It compiled cleanly, every op mapped to the HTP, and
-  the board ran it happily. The detections, however, were visibly worse than the workstation's, and once I
+  the board ran it happily. The detections, however, were visibly worse than the workstation's, and once We
   looked at the raw numbers the problem was unmistakable.</p>
 
   <div class="callout warn">
     Every class confidence came out at exactly <strong>0.50</strong>, which is sigmoid(0), instead of the
-    0.90–0.93 the FP32 model produces. And the same thing happened when I ran the quantized model on a plain
+    0.90–0.93 the FP32 model produces. And the same thing happened when We ran the quantized model on a plain
     CPU, no NPU involved. The model was broken before it ever reached the board.
   </div>
 
@@ -333,8 +333,8 @@
   This turns out to be a known weakness of quantizing YOLO exports whole, and it's why Qualcomm's own
   YOLOv8 recipe restructures the head before quantizing.</p>
 
-  <p>The fix I shipped is straightforward: run the detector in FP16, which the HTP supports natively. Before
-  redeploying I verified the FP16 build on a hosted IQ-9075 with real bearing images:</p>
+  <p>The fix We shipped is straightforward: run the detector in FP16, which the HTP supports natively. Before
+  redeploying We verified the FP16 build on a hosted IQ-9075 with real bearing images:</p>
 
   <div class="tablewrap"><table>
     <thead><tr><th>Image</th><th class="num">FP32 reference (top-3 conf.)</th><th class="num">NPU FP16 (top-3 conf.)</th><th class="num">NPU W8A16</th></tr></thead>
@@ -348,13 +348,13 @@
   <p>The same investigation surfaced two smaller bugs that are easy to hit: compiling with quantized model
   I/O exposes uint16 tensors whose scale and zero-point the board code can't recover (keep model I/O in
   float32 and let the compiled context convert internally), and OpenCV's NMS API expects boxes as
-  <code>x,y,w,h</code> where I was passing corner coordinates. Both fixed.</p>
+  <code>x,y,w,h</code> where We was passing corner coordinates. Both fixed.</p>
 </section>
 
 <section id="compare">
   <div class="sec-eyebrow">07 — Results</div>
   <h2>How close is the NPU to the workstation?</h2>
-  <p>With the FP16 detector deployed, I ran both pipelines over the same 152 input images and wrote a small
+  <p>With the FP16 detector deployed, We ran both pipelines over the same 152 input images and wrote a small
   tool that recovers the annotation masks from each rendered output and scores the agreement between the two
   sets:</p>
 
@@ -405,10 +405,10 @@
 
 <section id="lessons">
   <div class="sec-eyebrow">09 — Takeaways</div>
-  <h2>Things I'd tell anyone doing this</h2>
+  <h2>Things We'd tell anyone doing this</h2>
   <div class="cards">
     <div class="card"><h4>Test quantized models off-device first</h4><p>My broken W8A16 build reproduced its
-      failure on a plain CPU in seconds. If I had checked that before deploying, I'd have saved a full
+      failure on a plain CPU in seconds. If We had checked that before deploying, We'd have saved a full
       debug cycle on the board.</p></div>
     <div class="card"><h4>PTQ can silently kill a YOLO head</h4><p>Box coordinates and class probabilities
       sharing one output tensor means one quantization scale for ranges that differ by 640×. Either
