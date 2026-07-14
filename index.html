@@ -398,23 +398,28 @@
 </section>
 
 <section id="lessons">
-  <div class="sec-eyebrow">09 — Takeaways</div>
-  <h2>Things We'd tell anyone doing this</h2>
+  <div class="sec-eyebrow">09 — Lessons Learned</div>
+  <h2>Lessons learned and recommendations</h2>
   <div class="cards">
-    <div class="card"><h4>Test quantized models off-device first</h4><p>My broken W8A16 build reproduced its
-      failure on a plain CPU in seconds. If we had checked that before deploying, we'd have saved a full
-      debug cycle on the board.</p></div>
-    <div class="card"><h4>PTQ can silently kill a YOLO head</h4><p>Box coordinates and class probabilities
-      sharing one output tensor means one quantization scale for ranges that differ by 640×. Either
-      restructure the head before quantizing or don't quantize it.</p></div>
-    <div class="card"><h4>FP16 on a modern NPU is a real option</h4><p>No calibration data, near-zero accuracy
-      loss, and still 100% of ops on the NPU. Integer quantization is an optimization to earn, not a
-      requirement.</p></div>
-    <div class="card"><h4>Check tensor layouts on compiled artifacts</h4><p>The compiled MobileSAM came out
-      channels-last while YOLO stayed channels-first. Nothing warns you; read the ONNX inputs before writing
-      the runner.</p></div>
-    <div class="card"><h4>Keep model I/O in float</h4><p>Quantized I/O exposes integer tensors whose scale and
-      zero-point your board code can't see. Let the compiled context handle conversion internally.</p></div>
+    <div class="card"><h4>Validate quantized models off-device</h4><p>The defective W8A16 build reproduced its
+      failure in a CPU-only run of the quantized ONNX graph. Evaluating quantized models off-device isolates
+      quantization error from runtime and hardware effects, and avoids unnecessary on-target debugging.</p></div>
+    <div class="card"><h4>Post-training quantization can degrade YOLO detection heads</h4><p>The standard
+      YOLOv8 export concatenates box coordinates and class probabilities into a single output tensor, forcing
+      one quantization scale across value ranges that differ by more than two orders of magnitude. The
+      detection head should be restructured before quantization, or excluded from it.</p></div>
+    <div class="card"><h4>FP16 is a viable production precision on modern NPUs</h4><p>FP16 execution required
+      no calibration data, introduced negligible accuracy loss, and preserved full NPU operator coverage.
+      Integer quantization is best treated as an optimization to be validated, not a prerequisite for NPU
+      deployment.</p></div>
+    <div class="card"><h4>Verify the tensor layout of compiled artifacts</h4><p>The compiled MobileSAM models
+      use a channels-last (NHWC) layout while the compiled YOLO model remains channels-first (NCHW). Layout
+      conventions are not preserved by compilation and are not flagged; the ONNX input and output
+      specifications should be inspected before host-side code is written.</p></div>
+    <div class="card"><h4>Retain floating-point model I/O</h4><p>Compiling with quantized I/O exposes integer
+      tensors whose scale and zero-point are not recoverable by application code. Keeping model I/O in
+      float32 and allowing the compiled context to perform conversion internally avoids this failure
+      mode.</p></div>
   </div>
 </section>
 
