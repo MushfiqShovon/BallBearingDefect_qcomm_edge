@@ -183,9 +183,9 @@
 <div class="kpiband"><div class="wrap">
   <div class="kpis">
     <div class="kpi"><div class="v">0.895</div><div class="l">detector mAP@50</div><div class="d">YOLOv8s, 3 defect classes, 582 validation images</div></div>
-    <div class="kpi"><div class="v">100%</div><div class="l">of model ops on the NPU</div><div class="d">1,363 ops across both SAM models, no CPU or GPU fallback</div></div>
-    <div class="kpi"><div class="v">≈0.003</div><div class="l">confidence drift on the NPU</div><div class="d">FP16 on-device vs the FP32 workstation reference</div></div>
-    <div class="kpi"><div class="v">~6–7 fps</div><div class="l">end-to-end on device</div><div class="d">detection plus a mask for every defect, ~150 ms/image</div></div>
+    <div class="kpi"><div class="v">100%</div><div class="l">of model ops on the NPU</div><div class="d">1,363 ops across full precision and quantized SAM models, no CPU or GPU fallback</div></div>
+    <div class="kpi"><div class="v">≈0.003</div><div class="l">confidence drift on the NPU</div><div class="d">FP16 on-device vs FP32 workstation reference</div></div>
+    <div class="kpi"><div class="v">~6–7 fps</div><div class="l">end-to-end on NPU</div><div class="d">including detection plus mask for every defect, ~150 ms/image</div></div>
   </div>
 </div></div>
 
@@ -194,12 +194,11 @@
 <section id="idea">
   <div class="sec-eyebrow">01 — Approach</div>
   <h2>Masks without mask labels</h2>
-  <p>Getting pixel-level defect annotations for manufacturing data is slow and expensive, and the public
-  dataset we used doesn't have any. What it can support is a box detector, since bounding boxes are cheap to
-  label. The technique that makes defect segmentation possible anyway: Segment Anything accepts a bounding box as a
-  prompt. So the detector finds each defect, the box corners go to SAM as a two-point prompt, and SAM returns
-  the mask. No segmentation training, no mask labels, and the detector's class label rides along with each mask.</p>
-
+  <p>Getting pixel-level defect annotations for manufacturing data can be slow and expensive, and the public
+  dataset we use doesn't have any. What it supports is a box detector, since bounding boxes are cheap to
+  label. The technique that makes defect segmentation possible beyond simple detection: Segment Anything Model (SAM) accepts a bounding box as a
+  prompt. So the detector finds each defect, the box corners then go to SAM as a prompt, and and finally SAM returns
+  a mask for the corresponding defect. No segmentation model training or exact masks are required.
   <div class="flow">
     <span class="step">image</span><span class="arr">→</span>
     <span class="step">YOLOv8s <em>(boxes + classes)</em></span><span class="arr">→</span>
@@ -208,28 +207,28 @@
     <span class="step">per-class overlay</span>
   </div>
 
-  <p>We built the same pipeline twice:</p>
+  <p>We built the same pipeline in for both inference on the workstation and edge devices:</p>
   <div class="tablewrap"><table>
     <thead><tr><th></th><th>Workstation benchmark</th><th>Edge deployment</th></tr></thead>
     <tbody>
     <tr><td>Hardware</td><td>NVIDIA DGX Spark - GB10 Grace Blackwell GPU</td><td>Qualcomm Dragonwing IQ-9075, Hexagon HTP v73, 100 TOPS</td></tr>
     <tr><td>Detector</td><td>YOLOv8s, FP32 PyTorch</td><td>YOLOv8s, FP16 QNN context binary</td></tr>
     <tr><td>Segmenter</td><td>SAM 1.0 ViT-H (637M-param encoder)</td><td>MobileSAM (TinyViT, 5M-param encoder), FP16</td></tr>
-    <tr><td>Runtime</td><td>ultralytics + segment-anything</td><td>ONNX Runtime QNN EP on Qualcomm Ubuntu</td></tr>
+    <tr><td>Runtime</td><td>ultralytics </td><td>ONNX Runtime QNN EP on Qualcomm Ubuntu</td></tr>
     </tbody>
   </table></div>
-  <p>The workstation version is the benchmark; everything the NPU produces gets compared to it.</p>
+  <p>The workstation version is our benchmark; masks generated on the NPU get compared to the workstation outputs.</p>
 </section>
 
 <section id="dataset">
   <div class="sec-eyebrow">02 — Data</div>
   <h2>Dataset and annotations</h2>
-  <p>We used a public bearing-defect dataset by Kangning Li on figshare (CC0), containing 5,824 images at
+  <p>We used a public ball bearing defect dataset (henceforth referred to as BB) by Kangning Li on figshare (CC0), containing 5,824 images at
   554×416 resolution. The dataset covers three surface defect classes: <code>aocao</code> (groove),
   <code>cashang</code> (scratch), and <code>huahen</code> (scratch-mark).</p>
 
   <div class="callout">
-    <strong>Training labels:</strong> We used the available YOLO-format annotations with 4,660 training
+    <strong>Training labels:</strong> We used the available YOLO-format annotations on BB with 4,660 training
     images and 582 validation images. These labeled images were used to train the YOLOv8 defect detector
     before passing the detected boxes to SAM for mask generation.
   </div>
@@ -238,10 +237,8 @@
 <section id="training">
   <div class="sec-eyebrow">03 — Training</div>
   <h2>Training the detector</h2>
-  <p>YOLOv8s, fine-tuned from COCO weights at 640&nbsp;px, batch 32, 100 epochs. Training took about 1.6 hours
-  on the GB10. The first attempt actually crashed inside an nvrtc JIT call; the GB10's Blackwell GPU
-  (compute capability 12.1) isn't known to PyTorch's CUDA 12.8 wheels, and switching to the CUDA 13 build
-  fixed it. Worth knowing if you have one of these machines.</p>
+  <p>Our starting point was the YOLOv8s detector which was originally fine-tuned using the COCO dataset at 640 px resolution. We trained the detector on the BB dataset labels. Training took about 1.6 hours
+  on the GB10. The table below shows the inference results on our trained model.</p>
 
   <div class="tablewrap"><table>
     <thead><tr><th>Class</th><th class="num">Images</th><th class="num">Instances</th><th class="num">Precision</th><th class="num">Recall</th><th class="num">mAP@50</th><th class="num">mAP@50-95</th></tr></thead>
@@ -264,9 +261,9 @@
 <section id="benchmark">
   <div class="sec-eyebrow">04 — Benchmark</div>
   <h2>Reference Pipeline: YOLO+SAM ViT H inference using Nvidia DGX GB10 GPU</h2>
-  <p>On the GB10 we run the largest SAM checkpoint (ViT-H, 2.4&nbsp;GB). The image encoder runs once per
-  image, and all detected boxes are segmented in a single batched decoder call, which keeps things around
-  five milliseconds per image for detection plus a fraction of a second for the masks. Mask colors follow
+  <p>We used the largest SAM (ViT-H, 2.4&nbsp;GB) for inference on GB10. The image encoder runs once per
+  image, and all detected boxes are segmented in a single decoder call, which keeps things around
+  ten milliseconds per image for detection plus a fraction of a second for mask generation. Mask colors follow
   the class: red for grooves, yellow for scratches, blue for scratch-marks.</p>
 
   <div class="imgrow">
@@ -286,13 +283,13 @@
 <section id="edge">
   <div class="sec-eyebrow">05 — Deployment</div>
   <h2>The Edge Pipeline: Porting to the Qualcomm IQ-9075</h2>
-  <p>The goal on the board was to keep every heavy computation on the Hexagon NPU. Three things shaped how
+  <p>The goal was to keep all inference related computations on the Hexagon NPU. Three things shaped how
   the port actually went:</p>
   <div class="cards">
     <div class="card accent"><h4>ViT-H doesn't fit an NPU</h4><p>A 637M-parameter encoder is far beyond what
       the HTP can hold. We swapped in MobileSAM, whose 5M-parameter TinyViT encoder produces very similar
-      masks. Box prompting survives the swap unchanged.</p></div>
-    <div class="card accent"><h4>HTP compilation needs Qualcomm silicon</h4><p>Compiling locally fails on
+      masks. We didn't see any degradation in performance using this reduced version of SAM.</p></div>
+    <div class="card accent"><h4>Hexagon Tensor Processor (HTP) compilation needs Qualcomm silicon</h4><p>Compiling locally fails on
       non-Qualcomm machines, so all models were compiled through Qualcomm AI Hub for this exact SoC. AI Hub
       also profiles the compiled model on a real hosted IQ-9075, which turned out to be very useful.</p></div>
     <div class="card accent"><h4>The runtime is ONNX Runtime's QNN EP</h4><p>AI Hub wraps each compiled HTP
@@ -306,17 +303,17 @@
     <span class="step npu">AI Hub compile → HTP context binary</span><span class="arr">→</span>
     <span class="step npu">ONNX Runtime QNN EP on the board</span>
   </div>
-  <p>The full on-device implementation, including the runner script and deployment notes, is in the
+  <p>The full on-device implementation including the runner script and deployment notes has been in included in the
   <a href="https://github.com/MushfiqShovon/MobileSAM_BallBearing">MobileSAM_BallBearing</a> repository.</p>
 </section>
 
 <section id="quant">
   <div class="sec-eyebrow">06 — The interesting failure</div>
   <h2>What quantization broke, and how we found it</h2>
-  <p>My first production build quantized the detector to W8A16 (INT8 weights, INT16 activations), which is the
-  textbook way to use an NPU's full integer throughput. It compiled cleanly, every op mapped to the HTP, and
-  the board ran it happily. The detections, however, were visibly worse than the workstation's, and once We
-  looked at the raw numbers the problem was unmistakable.</p>
+  <p>Our first production build quantized the detector to W8A16 (INT8 weights, INT16 activations), which is the
+  standard way to use an NPU's full integer throughput. It compiled cleanly, every operation mapped to the HTP, and
+  ran without any issues on IQ-9 board. The detections on IQ-9 were however visibly worse than the corresponding
+  ones from the DGX workstation. The reasons are as explained below:</p>
 
   <div class="callout warn">
     Every class confidence came out at exactly <strong>0.50</strong>, which is sigmoid(0), instead of the
@@ -324,14 +321,14 @@
     CPU, no NPU involved. The model was broken before it ever reached the board.
   </div>
 
-  <p>The root cause sits in how Ultralytics exports YOLOv8: it's one end-to-end graph whose head concatenates
+  <p>The root cause sits in how Ultralytics exports YOLOv8: it's single end-to-end graph whose head concatenates
   box coordinates (values up to 640) and class probabilities (values up to 1) into a single output tensor.
   Post-training quantization has to pick one scale for that tensor, and the box range wins; on top of that,
   the box-decoding arithmetic inside the head gets quantized too. The class scores simply don't survive.
   This turns out to be a known weakness of quantizing YOLO exports whole, and it's why Qualcomm's own
   YOLOv8 recipe restructures the head before quantizing.</p>
 
-  <p>The fix we shipped is straightforward: run the detector in FP16, which the HTP supports natively. Before
+  <p>The problem can be resolved as follows: run the detector in FP16, which the HTP supports natively. Before
   redeploying we verified the FP16 build on a hosted IQ-9075 with real bearing images:</p>
 
   <div class="tablewrap"><table>
@@ -343,18 +340,17 @@
     </tbody>
   </table></div>
 
-  <p>The same investigation surfaced two smaller bugs that are easy to hit: compiling with quantized model
+  <p>The same investigation surfaced two smaller bugs that were easy to fix: compiling with quantized model
   I/O exposes uint16 tensors whose scale and zero-point the board code can't recover (keep model I/O in
   float32 and let the compiled context convert internally), and OpenCV's NMS API expects boxes as
-  <code>x,y,w,h</code> where we was passing corner coordinates. Both fixed.</p>
+  <code>x,y,w,h</code> where we were passing corner coordinates.</p>
 </section>
 
 <section id="compare">
   <div class="sec-eyebrow">07 — Results</div>
-  <h2>How close is the NPU to the workstation?</h2>
-  <p>With the FP16 detector deployed, we ran both pipelines over the same 152 input images and wrote a small
-  tool that recovers the annotation masks from each rendered output and scores the agreement between the two
-  sets:</p>
+  <h2>How close is the performance on NPU to the workstation?</h2>
+  <p>With the FP16 detector deployed on the NPU, we ran both pipelines using the same 152 images. Using a script that recovers 
+    the corresponding annotation masks from each rendered output we generate the IoU between the two sets of inference results as below:</p>
 
   <div class="tablewrap"><table>
     <thead><tr><th>Class</th><th class="num">Mean overlay IoU</th><th class="num">Median</th><th class="num">Defects (GB10)</th><th class="num">Defects (NPU)</th></tr></thead>
@@ -366,9 +362,9 @@
     </tbody>
   </table></div>
 
-  <p>The numbers make more sense next to the images. Detection agrees almost perfectly: boxes land in the
-  same places, confidences are within about 0.01, and the per-class defect totals differ by only 5–10%.
-  What drags the IoU down is mask shape, which is exactly where the two segmenters differ by design; ViT-H
+  <p>The numbers seem consistent with raw visual inspection of the two sets of inference outputs. Detection agrees almost perfectly: boxes land in the
+  same places, confidences are within about 0.01 and per-class defect totals differ by only 5–10%.
+  For segmentation we compare the inference performance between FP32 SAM on GB10 vs FP16 MobileSAM on NPU. What drags the IoU down is mask shape, which is exactly where the two segmenters differ by design; ViT-H
   traces thin scratches more crisply than MobileSAM does, and on very small grooves a handful of boundary
   pixels is enough to sink the IoU even when both models mark the same defect.</p>
 
@@ -385,8 +381,8 @@
 </section>
 
 <section id="perf">
-  <div class="sec-eyebrow">08 — Performance</div>
-  <h2>Speed on the device</h2>
+  <div class="sec-eyebrow">08 — Profiling</div>
+  <h2>Latency on the device</h2>
   <p>These numbers come from AI Hub profile jobs on a real hosted IQ-9075 EVK, not an emulator:</p>
   <div class="tablewrap"><table>
     <thead><tr><th>Model (FP16)</th><th class="num">Latency</th><th class="num">Ops on NPU</th><th class="num">Peak memory</th><th class="num">PSNR vs FP32</th></tr></thead>
@@ -395,8 +391,8 @@
     <tr><td>MobileSAM decoder (per defect)</td><td class="num">6.0 ms</td><td class="num">866 / 866</td><td class="num">4–10 MB</td><td class="num">60.5 dB</td></tr>
     </tbody>
   </table></div>
-  <p>With the detector adding roughly 10–25 ms, a full image lands around 140–160 ms, or 6–7 frames per
-  second, entirely on the NPU. The encoder runs once per image and the decoder once per defect. For
+  <p>A full image takes around 140–160 ms for inference which includes 10–25 ms for the detector. This translates to 6–7 frames per
+  second entirely on the NPU. The SAM encoder runs once per image while the SAM decoder runs once per defect based on the supplied derection prompt generated from the BB dataset fine tuned YOLOv8s model. For
   reference, 30 dB PSNR is usually considered good agreement; 47–60 dB means the NPU output is numerically
   almost indistinguishable from desktop full precision.</p>
 </section>
@@ -419,8 +415,6 @@
       the runner.</p></div>
     <div class="card"><h4>Keep model I/O in float</h4><p>Quantized I/O exposes integer tensors whose scale and
       zero-point your board code can't see. Let the compiled context handle conversion internally.</p></div>
-    <div class="card"><h4>Read the paper before annotating</h4><p>An "images-only" dataset had its complete
-      label set sitting inside the author's code archives. An hour of digging beat weeks of labeling.</p></div>
   </div>
 </section>
 
